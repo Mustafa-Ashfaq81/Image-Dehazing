@@ -44,7 +44,7 @@ def train(train_loader, network, criterion, optimizer, scaler):
 
 		with autocast(args.no_autocast):
 			output = network(source_img)
-			print(f"Output shape: {output.shape}")
+			# print(f"Output shape: {output.shape}")
 			loss = criterion(output, target_img)
 
 		losses.update(loss.item())
