@@ -5,33 +5,55 @@ import math
 import numpy as np
 from torch.nn.init import _calculate_fan_in_and_fan_out
 from timm.models.layers import to_2tuple, trunc_normal_
-from torchvision.models import resnet18, ResNet18_Weights
 
-class CustomizedCNNFeatureExtractor(nn.Module):
-    def __init__(self, pretrained=True, output_channels=256):
-        super(CustomizedCNNFeatureExtractor, self).__init__()
-        # Load a pre-trained ResNet-18 model
-        if pretrained:
-            weights = ResNet18_Weights.IMAGENET1K_V1
-            self.resnet = resnet18(weights=weights)
-        else:
-            self.resnet = resnet18(weights=None)
-        
-        # Remove the fully connected layer and global average pooling
-        self.features = nn.Sequential(*list(self.resnet.children())[:-2])  # Using an earlier cut-off
-        
-        # Optionally add a custom convolutional layer to adjust the number of output channels
-        # Assuming you choose to take the output from an intermediate layer that has more channels
-        self.adjust_channels = nn.Conv2d(in_channels=512, out_channels=output_channels, kernel_size=1)  # Adjust in_channels based on the layer you're cutting off at
-        
-        # Adjusting the stride or using additional pooling could help preserve spatial dimensions
-        self.adaptive_pool = nn.AdaptiveAvgPool2d((32, 32))  # You can specify the output size you want for more control
+class CMTStem(nn.Module):
+    """
+    Use CMTStem module to process input image and overcome the limitation of the
+    non-overlapping patches.
+
+    First past through the image with a 2x2 convolution to reduce the image size.
+    Then past throught two 1x1 convolution for better local information.
+
+    Input:
+        - x: (B, 3, H, W)
+    Output:
+        - result: (B, 32, H / 2, W / 2)
+    """
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size = 3, stride = 2, padding = 1, bias = False)
+        self.gelu1 = nn.GELU()
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size = 3, stride = 1, padding = 1, bias = False)
+        self.gelu2 = nn.GELU()
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.conv3 = nn.Conv2d(out_channels, out_channels, kernel_size = 3, stride = 1, padding = 1, bias = False)
+        self.gelu3 = nn.GELU()
+        self.bn3 = nn.BatchNorm2d(out_channels)
+        self.init_weight()
+
+    def init_weight(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight)
+                if m.bias is not None:
+                    m.bias.data.zero_()
+            elif isinstance(m, nn.BatchNorm2d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
 
     def forward(self, x):
-        x = self.features(x)
-        x = self.adjust_channels(x)  # Adjust channel dimensions
-        x = self.adaptive_pool(x)  # Optionally adjust spatial dimensions
-        return x
+        x = self.conv1(x)
+        x = self.gelu1(x)
+        x = self.bn1(x)
+        x = self.conv2(x)
+        x = self.gelu2(x)
+        x = self.bn2(x)
+        x = self.conv3(x)
+        x = self.gelu3(x)
+        result = self.bn3(x)
+        return result
+
 	
 
 class CustomCNNFeatureExtractor(nn.Module):
@@ -371,6 +393,17 @@ class PatchEmbed(nn.Module):
 
 		self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=kernel_size, stride=patch_size,
 							  padding=(kernel_size-patch_size+1)//2, padding_mode='reflect')
+		self.init_weight()
+		
+	def init_weight(self):
+		for m in self.modules():
+			if isinstance(m, nn.Conv2d):
+				nn.init.kaiming_normal_(m.weight)
+				if m.bias is not None:
+					m.bias.data.zero_()
+			elif isinstance(m, nn.LayerNorm):
+				m.weight.data.fill_(1)
+				m.bias.data.zero_()
 
 	def forward(self, x):
 		x = self.proj(x)
@@ -439,8 +472,8 @@ class DehazeFormer(nn.Module):
 		super(DehazeFormer, self).__init__()
 
 		# Initialize the CNN feature extractor
-		self.cnn_extractor = CustomCNNFeatureExtractor() #CustomizedCNNFeatureExtractor() #CNNFeatureExtractor(pretrained=True)
-		self.channel_adjustment_layer = nn.Conv2d(in_channels=8, out_channels=3, kernel_size=1)
+		self.cnn_extractor = CMTStem(3, 32) #CustomCNNFeatureExtractor()
+		self.channel_adjustment_layer = nn.Conv2d(in_channels=32, out_channels=3, kernel_size=1)
 
 		# setting
 		self.patch_size = 4
@@ -449,7 +482,7 @@ class DehazeFormer(nn.Module):
 
 		# split image into non-overlapping patches
 		self.patch_embed = PatchEmbed(
-			patch_size=1, in_chans=8, embed_dim=embed_dims[0], kernel_size=3)
+			patch_size=1, in_chans=32, embed_dim=embed_dims[0], kernel_size=3)
 
 		# backbone
 		self.layer1 = BasicLayer(network_depth=sum(depths), dim=embed_dims[0], depth=depths[0],
@@ -639,9 +672,9 @@ def dehazeformer_l():
 		attn_ratio=[1/4, 1/2, 3/4, 0, 0],
 		conv_type=['Conv', 'Conv', 'Conv', 'Conv', 'Conv'])
 
-if __name__ == '__main__':
-	model = dehazeformer_t()
-	shape = (8, 3, 64, 64)
-	img = torch.randn(*shape)
-	output = model(img)
-	print(output.shape)
+# if __name__ == '__main__':
+# 	model = dehazeformer_t()
+# 	shape = (8, 3, 64, 64)
+# 	img = torch.randn(*shape)
+# 	output = model(img)
+# 	print(output.shape)
