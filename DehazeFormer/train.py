@@ -101,6 +101,7 @@ if __name__ == '__main__':
 	scaler = GradScaler()
 
 	dataset_dir = os.path.join(args.data_dir, args.dataset)
+	print(f"this is dataset dir:{dataset_dir}")
 	train_dataset = PairLoader(dataset_dir, 'train', 'train', 
 								setting['patch_size'], setting['edge_decay'], setting['only_h_flip'])
 	train_loader = DataLoader(train_dataset,
