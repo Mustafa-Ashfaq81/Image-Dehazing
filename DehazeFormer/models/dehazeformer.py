@@ -513,7 +513,7 @@ def dehazeformer_t(img_size = 64):
     return model
 
 
-def dehazeformer_s(img_size = 224):
+def dehazeformer_s(img_size = 64):
     model = DehazeFormer(
         in_channels = 3,
         stem_channel = 16,
@@ -525,7 +525,7 @@ def dehazeformer_s(img_size = 224):
     )
     return model
 
-def dehazeformer_m(img_size = 224):
+def dehazeformer_m(img_size = 64):
     model = DehazeFormer(
         in_channels = 3,
         stem_channel = 32,
@@ -537,7 +537,7 @@ def dehazeformer_m(img_size = 224):
     )
     return model
 
-def dehazeformer_b(img_size = 224):
+def dehazeformer_b(img_size = 64):
     model = DehazeFormer(
         in_channels = 3,
         stem_channel = 38,
@@ -550,7 +550,7 @@ def dehazeformer_b(img_size = 224):
     return model
 
 # if __name__ == '__main__':
-# 	model = dehazeformer_t()
+# 	model = dehazeformer_b()
 # 	shape = (8, 3, 64, 64)
 # 	img = torch.randn(*shape)
 # 	output = model(img)
