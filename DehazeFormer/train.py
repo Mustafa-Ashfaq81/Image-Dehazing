@@ -44,7 +44,7 @@ def train(train_loader, network, criterion, optimizer, scaler):
 
 		with autocast(args.no_autocast):
 			output = network(source_img)
-			# print(f"Output shape: {output.shape}")
+			print(f"Output shape: {output.shape}")
 			loss = criterion(output, target_img)
 
 		losses.update(loss.item())
@@ -101,7 +101,6 @@ if __name__ == '__main__':
 	scaler = GradScaler()
 
 	dataset_dir = os.path.join(args.data_dir, args.dataset)
-	# print(f"this is dataset dir:{dataset_dir}")
 	train_dataset = PairLoader(dataset_dir, 'train', 'train', 
 								setting['patch_size'], setting['edge_decay'], setting['only_h_flip'])
 	train_loader = DataLoader(train_dataset,

@@ -5,6 +5,57 @@ import math
 import numpy as np
 from torch.nn.init import _calculate_fan_in_and_fan_out
 from timm.models.layers import to_2tuple, trunc_normal_
+from torchvision.models import resnet18, ResNet18_Weights
+
+class CustomizedCNNFeatureExtractor(nn.Module):
+    def __init__(self, pretrained=True, output_channels=256):
+        super(CustomizedCNNFeatureExtractor, self).__init__()
+        # Load a pre-trained ResNet-18 model
+        if pretrained:
+            weights = ResNet18_Weights.IMAGENET1K_V1
+            self.resnet = resnet18(weights=weights)
+        else:
+            self.resnet = resnet18(weights=None)
+        
+        # Remove the fully connected layer and global average pooling
+        self.features = nn.Sequential(*list(self.resnet.children())[:-2])  # Using an earlier cut-off
+        
+        # Optionally add a custom convolutional layer to adjust the number of output channels
+        # Assuming you choose to take the output from an intermediate layer that has more channels
+        self.adjust_channels = nn.Conv2d(in_channels=512, out_channels=output_channels, kernel_size=1)  # Adjust in_channels based on the layer you're cutting off at
+        
+        # Adjusting the stride or using additional pooling could help preserve spatial dimensions
+        self.adaptive_pool = nn.AdaptiveAvgPool2d((32, 32))  # You can specify the output size you want for more control
+
+    def forward(self, x):
+        x = self.features(x)
+        x = self.adjust_channels(x)  # Adjust channel dimensions
+        x = self.adaptive_pool(x)  # Optionally adjust spatial dimensions
+        return x
+	
+
+class CustomCNNFeatureExtractor(nn.Module):
+    def __init__(self):
+        super(CustomCNNFeatureExtractor, self).__init__()
+        self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1)
+        self.bn1 = nn.BatchNorm2d(16)
+        self.relu = nn.ReLU(inplace=True)
+
+        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, stride=1, padding=1)
+        self.bn2 = nn.BatchNorm2d(32)
+
+        self.conv3 = nn.Conv2d(32, 16, kernel_size=3, stride=2, padding=1) # Downsample here
+        self.bn3 = nn.BatchNorm2d(16)
+
+        self.conv4 = nn.Conv2d(16, 8, kernel_size=3, stride=1, padding=1)
+        self.bn4 = nn.BatchNorm2d(8)
+
+    def forward(self, x):
+        x = self.relu(self.bn1(self.conv1(x)))
+        x = self.relu(self.bn2(self.conv2(x)))
+        x = self.relu(self.bn3(self.conv3(x))) # Downsample
+        x = self.relu(self.bn4(self.conv4(x)))
+        return x
 
 
 class RLN(nn.Module):
@@ -320,17 +371,6 @@ class PatchEmbed(nn.Module):
 
 		self.proj = nn.Conv2d(in_chans, embed_dim, kernel_size=kernel_size, stride=patch_size,
 							  padding=(kernel_size-patch_size+1)//2, padding_mode='reflect')
-		self.init_weight()
-		
-	def init_weight(self):
-		for m in self.modules():
-			if isinstance(m, nn.Conv2d):
-				nn.init.kaiming_normal_(m.weight)
-				if m.bias is not None:
-					m.bias.data.zero_()
-			elif isinstance(m, nn.LayerNorm):
-				m.weight.data.fill_(1)
-				m.bias.data.zero_()
 
 	def forward(self, x):
 		x = self.proj(x)
@@ -386,172 +426,222 @@ class SKFusion(nn.Module):
 		out = torch.sum(in_feats*attn, dim=1)
 		return out      
 
-from cmt_module import CMTStem, Patch_Aggregate, CMTBlock
 
 class DehazeFormer(nn.Module):
-	def __init__(self,
-		in_channels = 3,
-		stem_channel = 32,
-		cmt_channel = [46, 92, 184, 368],
-		patch_channel = [46, 92, 184, 368],
-		block_layer = [2, 2, 10, 2],
-		R = 3.6,
-		img_size = 224,
-	):
+	def __init__(self, in_chans=3, out_chans=4, window_size=8,
+				 embed_dims=[24, 48, 96, 48, 24],
+				 mlp_ratios=[2., 4., 4., 2., 2.],
+				 depths=[16, 16, 16, 8, 8],
+				 num_heads=[2, 4, 6, 1, 1],
+				 attn_ratio=[1/4, 1/2, 3/4, 0, 0],
+				 conv_type=['DWConv', 'DWConv', 'DWConv', 'DWConv', 'DWConv'],
+				 norm_layer=[RLN, RLN, RLN, RLN, RLN]):
 		super(DehazeFormer, self).__init__()
-		
-		size = [img_size // 4, img_size // 8, img_size // 16, img_size // 32]
-		
-		self.stem = CMTStem(in_channels, stem_channel)
 
-		self.patch1 = Patch_Aggregate(stem_channel, patch_channel[0])
-		self.patch2 = Patch_Aggregate(patch_channel[0], patch_channel[1])
-		self.patch3 = Patch_Aggregate(patch_channel[1], patch_channel[2])
-		self.patch4 = Patch_Aggregate(patch_channel[2], patch_channel[3])
+		# Initialize the CNN feature extractor
+		self.cnn_extractor = CustomCNNFeatureExtractor() #CustomizedCNNFeatureExtractor() #CNNFeatureExtractor(pretrained=True)
+		self.channel_adjustment_layer = nn.Conv2d(in_channels=8, out_channels=3, kernel_size=1)
 
-		stage1 = []
-		for _ in range(block_layer[0]):
-			cmt_layer = CMTBlock(
-                    img_size = size[0],
-                    stride = 8,
-                    d_k = cmt_channel[0],
-                    d_v = cmt_channel[0],
-                    num_heads = 1,
-                    R = R,
-                    in_channels = patch_channel[0]
-            )
-			stage1.append(cmt_layer)
-		self.stage1 = nn.Sequential(*stage1)
+		# setting
+		self.patch_size = 4
+		self.window_size = window_size
+		self.mlp_ratios = mlp_ratios
 
-		stage2 = []
-		for _ in range(block_layer[1]):
-			cmt_layer = CMTBlock(
-                img_size = size[1],
-                stride = 4,
-                d_k = cmt_channel[1] // 2,
-                d_v = cmt_channel[1] // 2,
-                num_heads = 2,
-                R = R,
-                in_channels = patch_channel[1]
-            )
-			stage2.append(cmt_layer)
-		self.stage2 = nn.Sequential(*stage2)
+		# split image into non-overlapping patches
+		self.patch_embed = PatchEmbed(
+			patch_size=1, in_chans=8, embed_dim=embed_dims[0], kernel_size=3)
 
-		stage3 = []
-		for _ in range(block_layer[2]):
-			cmt_layer = CMTBlock(
-                img_size = size[2],
-                stride = 2,
-                d_k = cmt_channel[2] // 4,
-                d_v = cmt_channel[2] // 4,
-                num_heads = 4,
-                R = R,
-                in_channels = patch_channel[2]
-            )
-			stage3.append(cmt_layer)
-		self.stage3 = nn.Sequential(*stage3)
+		# backbone
+		self.layer1 = BasicLayer(network_depth=sum(depths), dim=embed_dims[0], depth=depths[0],
+					   			 num_heads=num_heads[0], mlp_ratio=mlp_ratios[0],
+					   			 norm_layer=norm_layer[0], window_size=window_size,
+					   			 attn_ratio=attn_ratio[0], attn_loc='last', conv_type=conv_type[0])
 
-		stage4 = []
-		for _ in range(block_layer[3]):
-			cmt_layer = CMTBlock(
-                img_size = size[3],
-                stride = 1,
-                d_k = cmt_channel[3] // 8,
-                d_v = cmt_channel[3] // 8,
-                num_heads = 8,
-                R = R,
-                in_channels = patch_channel[3]
-            )
-			stage4.append(cmt_layer)
-		self.stage4 = nn.Sequential(*stage4)
-		
-		self.dehazing_layers = nn.Sequential(
-            nn.Conv2d(patch_channel[3], in_channels, kernel_size=3, padding=1),
-            nn.BatchNorm2d(in_channels),
-            nn.ReLU(inplace=True)
-        )
+		self.patch_merge1 = PatchEmbed(
+			patch_size=2, in_chans=embed_dims[0], embed_dim=embed_dims[1])
 
-		self.upsample = nn.Upsample(scale_factor=32, mode='bilinear', align_corners=False)
+		self.skip1 = nn.Conv2d(embed_dims[0], embed_dims[0], 1)
+
+		self.layer2 = BasicLayer(network_depth=sum(depths), dim=embed_dims[1], depth=depths[1],
+								 num_heads=num_heads[1], mlp_ratio=mlp_ratios[1],
+								 norm_layer=norm_layer[1], window_size=window_size,
+								 attn_ratio=attn_ratio[1], attn_loc='last', conv_type=conv_type[1])
+
+		self.patch_merge2 = PatchEmbed(
+			patch_size=2, in_chans=embed_dims[1], embed_dim=embed_dims[2])
+
+		self.skip2 = nn.Conv2d(embed_dims[1], embed_dims[1], 1)
+
+		self.layer3 = BasicLayer(network_depth=sum(depths), dim=embed_dims[2], depth=depths[2],
+								 num_heads=num_heads[2], mlp_ratio=mlp_ratios[2],
+								 norm_layer=norm_layer[2], window_size=window_size,
+								 attn_ratio=attn_ratio[2], attn_loc='last', conv_type=conv_type[2])
+
+		self.patch_split1 = PatchUnEmbed(
+			patch_size=2, out_chans=embed_dims[3], embed_dim=embed_dims[2])
+
+		assert embed_dims[1] == embed_dims[3]
+		self.fusion1 = SKFusion(embed_dims[3])
+
+		self.layer4 = BasicLayer(network_depth=sum(depths), dim=embed_dims[3], depth=depths[3],
+								 num_heads=num_heads[3], mlp_ratio=mlp_ratios[3],
+								 norm_layer=norm_layer[3], window_size=window_size,
+								 attn_ratio=attn_ratio[3], attn_loc='last', conv_type=conv_type[3])
+
+		self.patch_split2 = PatchUnEmbed(
+			patch_size=2, out_chans=embed_dims[4], embed_dim=embed_dims[3])
+
+		assert embed_dims[0] == embed_dims[4]
+		self.fusion2 = SKFusion(embed_dims[4])			
+
+		self.layer5 = BasicLayer(network_depth=sum(depths), dim=embed_dims[4], depth=depths[4],
+					   			 num_heads=num_heads[4], mlp_ratio=mlp_ratios[4],
+					   			 norm_layer=norm_layer[4], window_size=window_size,
+					   			 attn_ratio=attn_ratio[4], attn_loc='last', conv_type=conv_type[4])
+
+		# merge non-overlapping patches into image
+		self.patch_unembed = PatchUnEmbed(
+			patch_size=1, out_chans=out_chans, embed_dim=embed_dims[4], kernel_size=3)
+
+
+	def check_image_size(self, x):
+		# NOTE: for I2I test
+		_, _, h, w = x.size()
+		mod_pad_h = (self.patch_size - h % self.patch_size) % self.patch_size
+		mod_pad_w = (self.patch_size - w % self.patch_size) % self.patch_size
+		x = F.pad(x, (0, mod_pad_w, 0, mod_pad_h), 'reflect')
+		return x
+
+	def forward_features(self, x):
+		# print("going in patch embed")
+		x = self.patch_embed(x)
+		# print(f"out of patch embed: {x.shape}")
+		x = self.layer1(x)
+		# print("out of layer1")
+		skip1 = x
+
+		x = self.patch_merge1(x)
+		# print(f"out of patch merge 1: {x.shape}")
+		x = self.layer2(x)
+		# print(f"out of layer 2: {x.shape}")
+		skip2 = x
+
+		x = self.patch_merge2(x)
+		# print("out of patch merge 2")
+		x = self.layer3(x)
+		x = self.patch_split1(x)
+
+		x = self.fusion1([x, self.skip2(skip2)]) + x
+		x = self.layer4(x)
+		x = self.patch_split2(x)
+
+		x = self.fusion2([x, self.skip1(skip1)]) + x
+		x = self.layer5(x)
+		# print(f"Shape after layer 5: {x.shape}")
+		x = self.patch_unembed(x)
+		# print(f"Final shape after patch unembed: {x.shape}")
+		return x
 
 	def forward(self, x):
-		x = self.stem(x)
+		H, W = x.shape[2:]
+		# print(f"Height: {H}, Width: {W}")
+		x = self.check_image_size(x)
+		# print(f"Check img size: {x.shape}")
 
-		x = self.patch1(x)
-		x = self.stage1(x)
+		x = self.cnn_extractor(x)
+		# print(f"Shape after CNN: {x.shape}")
 
-		x = self.patch2(x)
-		x = self.stage2(x)
+		feat = self.forward_features(x)
+		# print(f"Shape after forward features: {feat.shape}")
+		K, B = torch.split(feat, (1, 3), dim=1)
+		# print(f"K: {K.shape}, B: {B.shape}, x: {x.shape}")
+  
+		x_adjusted = x.to(dtype=torch.float32)  # Ensure x is float32
+		x_adjusted = self.channel_adjustment_layer(x_adjusted)
 
-		x = self.patch3(x)
-		x = self.stage3(x)
+		# Now you can perform the operation without dimension mismatch
+		# print(f"K: {K.shape}, B: {B.shape}, x: {x_adjusted.shape}")
+		x = K * x_adjusted - B + x_adjusted
 
-		x = self.patch4(x)
-		x = self.stage4(x)
-
-		# print(f"Shape before dehazing layer: {x.shape}")
-		dehazed_image = self.dehazing_layers(x)
-		# print(f"Shape after dehazing layer: {x.shape}")
-		# print("-"*100)
-
-		# print(f"Upsampling")
-		dehazed_image = self.upsample(dehazed_image)
-		# print(f"Final Shape- STEM->PA->Block->AvgPool->dehaze: {dehazed_image.shape}")
-		# print("-"*100)
-		return dehazed_image
-
-
-def dehazeformer_t(img_size = 64):
-    model = DehazeFormer(
-        in_channels = 3,
-        stem_channel = 16,
-        cmt_channel = [46, 92, 184, 368],
-        patch_channel = [46, 92, 184, 368],
-        block_layer = [2, 2, 10, 2],
-        R = 3.6,
-        img_size = img_size,
-    )
-    return model
+		# x = K * x - B + x
+		x = x[:, :, :H, :W]
+		x = F.interpolate(x, size=(64, 64), mode='bilinear', align_corners=False)
+		# print(f"Final shape: {x.shape}")
+		return x
 
 
-def dehazeformer_s(img_size = 64):
-    model = DehazeFormer(
-        in_channels = 3,
-        stem_channel = 16,
-        cmt_channel = [52, 104, 208, 416],
-        patch_channel = [52, 104, 208, 416],
-        block_layer = [3, 3, 12, 3],
-        R = 3.8,
-        img_size = img_size,
-    )
-    return model
+def dehazeformer_t():
+    return DehazeFormer(
+		embed_dims=[24, 48, 96, 48, 24],
+		mlp_ratios=[2., 4., 4., 2., 2.],
+		depths=[4, 4, 4, 2, 2],
+		num_heads=[2, 4, 6, 1, 1],
+		attn_ratio=[0, 1/2, 1, 0, 0],
+		conv_type=['DWConv', 'DWConv', 'DWConv', 'DWConv', 'DWConv'])
 
-def dehazeformer_m(img_size = 64):
-    model = DehazeFormer(
-        in_channels = 3,
-        stem_channel = 32,
-        cmt_channel = [64, 128, 256, 512],
-        patch_channel = [64, 128, 256, 512],
-        block_layer = [3, 3, 16, 3],
-        R = 4,
-        img_size = img_size,
-    )
-    return model
 
-def dehazeformer_b(img_size = 64):
-    model = DehazeFormer(
-        in_channels = 3,
-        stem_channel = 38,
-        cmt_channel = [76, 152, 304, 608],
-        patch_channel = [76, 152, 304, 608],
-        block_layer = [4, 4, 20, 4],
-        R = 4,
-        img_size = img_size,
-    )
-    return model
+def dehazeformer_s():
+    return DehazeFormer(
+		embed_dims=[24, 48, 96, 48, 24],
+		mlp_ratios=[2., 4., 4., 2., 2.],
+		depths=[8, 8, 8, 4, 4],
+		num_heads=[2, 4, 6, 1, 1],
+		attn_ratio=[1/4, 1/2, 3/4, 0, 0],
+		conv_type=['DWConv', 'DWConv', 'DWConv', 'DWConv', 'DWConv'])
 
-# if __name__ == '__main__':
-# 	model = dehazeformer_b()
-# 	shape = (8, 3, 64, 64)
-# 	img = torch.randn(*shape)
-# 	output = model(img)
-# 	print(output.shape)
+
+def dehazeformer_b():
+    return DehazeFormer(
+        embed_dims=[24, 48, 96, 48, 24],
+		mlp_ratios=[2., 4., 4., 2., 2.],
+		depths=[16, 16, 16, 8, 8],
+		num_heads=[2, 4, 6, 1, 1],
+		attn_ratio=[1/4, 1/2, 3/4, 0, 0],
+		conv_type=['DWConv', 'DWConv', 'DWConv', 'DWConv', 'DWConv'])
+
+
+def dehazeformer_d():
+    return DehazeFormer(
+        embed_dims=[24, 48, 96, 48, 24],
+		mlp_ratios=[2., 4., 4., 2., 2.],
+		depths=[32, 32, 32, 16, 16],
+		num_heads=[2, 4, 6, 1, 1],
+		attn_ratio=[1/4, 1/2, 3/4, 0, 0],
+		conv_type=['DWConv', 'DWConv', 'DWConv', 'DWConv', 'DWConv'])
+
+
+def dehazeformer_w():
+    return DehazeFormer(
+        embed_dims=[48, 96, 192, 96, 48],
+		mlp_ratios=[2., 4., 4., 2., 2.],
+		depths=[16, 16, 16, 8, 8],
+		num_heads=[2, 4, 6, 1, 1],
+		attn_ratio=[1/4, 1/2, 3/4, 0, 0],
+		conv_type=['DWConv', 'DWConv', 'DWConv', 'DWConv', 'DWConv'])
+
+
+def dehazeformer_m():
+    return DehazeFormer(
+		embed_dims=[24, 48, 96, 48, 24],
+		mlp_ratios=[2., 4., 4., 2., 2.],
+		depths=[12, 12, 12, 6, 6],
+		num_heads=[2, 4, 6, 1, 1],
+		attn_ratio=[1/4, 1/2, 3/4, 0, 0],
+		conv_type=['Conv', 'Conv', 'Conv', 'Conv', 'Conv'])
+
+
+def dehazeformer_l():
+    return DehazeFormer(
+		embed_dims=[48, 96, 192, 96, 48],
+		mlp_ratios=[2., 4., 4., 2., 2.],
+		depths=[16, 16, 16, 12, 12],
+		num_heads=[2, 4, 6, 1, 1],
+		attn_ratio=[1/4, 1/2, 3/4, 0, 0],
+		conv_type=['Conv', 'Conv', 'Conv', 'Conv', 'Conv'])
+
+if __name__ == '__main__':
+	model = dehazeformer_t()
+	shape = (8, 3, 64, 64)
+	img = torch.randn(*shape)
+	output = model(img)
+	print(output.shape)
