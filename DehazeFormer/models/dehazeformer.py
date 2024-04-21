@@ -7,32 +7,6 @@ from torch.nn.init import _calculate_fan_in_and_fan_out
 from timm.models.layers import to_2tuple, trunc_normal_
 from torchvision.models import resnet18, ResNet18_Weights
 
-class CustomizedCNNFeatureExtractor(nn.Module):
-    def __init__(self, pretrained=True, output_channels=256):
-        super(CustomizedCNNFeatureExtractor, self).__init__()
-        # Load a pre-trained ResNet-18 model
-        if pretrained:
-            weights = ResNet18_Weights.IMAGENET1K_V1
-            self.resnet = resnet18(weights=weights)
-        else:
-            self.resnet = resnet18(weights=None)
-        
-        # Remove the fully connected layer and global average pooling
-        self.features = nn.Sequential(*list(self.resnet.children())[:-2])  # Using an earlier cut-off
-        
-        # Optionally add a custom convolutional layer to adjust the number of output channels
-        # Assuming you choose to take the output from an intermediate layer that has more channels
-        self.adjust_channels = nn.Conv2d(in_channels=512, out_channels=output_channels, kernel_size=1)  # Adjust in_channels based on the layer you're cutting off at
-        
-        # Adjusting the stride or using additional pooling could help preserve spatial dimensions
-        self.adaptive_pool = nn.AdaptiveAvgPool2d((32, 32))  # You can specify the output size you want for more control
-
-    def forward(self, x):
-        x = self.features(x)
-        x = self.adjust_channels(x)  # Adjust channel dimensions
-        x = self.adaptive_pool(x)  # Optionally adjust spatial dimensions
-        return x
-	
 
 class CMTStem(nn.Module):
     """
@@ -511,10 +485,10 @@ class DehazeFormer(nn.Module):
 		super(DehazeFormer, self).__init__()
 
 		# Initialize the CNN feature extractor
-		self.cnn_extractor = CMTStem(3,257) #CustomizedCNNFeatureExtractor() #CNNFeatureExtractor(pretrained=True)
-		self.channel_adjustment_layer = nn.Conv2d(in_channels=257, out_channels=256, kernel_size=1)
+		self.cnn_extractor = CMTStem(3,129) #CustomizedCNNFeatureExtractor() #CNNFeatureExtractor(pretrained=True)
+		self.channel_adjustment_layer = nn.Conv2d(in_channels=129, out_channels=128, kernel_size=1)
 
-		self.cnnDecoder = CMTDecoder(256,64)
+		self.cnnDecoder = CMTDecoder(128,64)
 
 		# setting
 		self.patch_size = 4
@@ -523,7 +497,7 @@ class DehazeFormer(nn.Module):
 
 		# split image into non-overlapping patches
 		self.patch_embed = PatchEmbed(
-			patch_size=1, in_chans=257, embed_dim=embed_dims[0], kernel_size=3)
+			patch_size=1, in_chans=129, embed_dim=embed_dims[0], kernel_size=3)
 
 		# backbone
 		self.layer1 = BasicLayer(network_depth=sum(depths), dim=embed_dims[0], depth=depths[0],
@@ -575,7 +549,7 @@ class DehazeFormer(nn.Module):
 
 		# merge non-overlapping patches into image
 		self.patch_unembed = PatchUnEmbed(
-			patch_size=1, out_chans=257, embed_dim=embed_dims[4], kernel_size=3)
+			patch_size=1, out_chans=129, embed_dim=embed_dims[4], kernel_size=3)
 
 
 	def check_image_size(self, x):
@@ -635,7 +609,7 @@ class DehazeFormer(nn.Module):
 
 		feat = self.forward_features(x)
 		# print(f"Shape after forward features: {feat.shape}")
-		K, B = torch.split(feat, (1, 256), dim=1)
+		K, B = torch.split(feat, (1, 128), dim=1)
 
 		x = self.channel_adjustment_layer(x)
 		# print(f"K: {K.shape}, B: {B.shape}, x: {x.shape}")
@@ -722,4 +696,4 @@ def dehazeformer_l():
 # 	shape = (8, 3, 64, 64)
 # 	img = torch.randn(*shape)
 # 	output = model(img)
-# 	# print(output.shape)
+# 	print(output.shape)
