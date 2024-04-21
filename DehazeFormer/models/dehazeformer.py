@@ -34,28 +34,100 @@ class CustomizedCNNFeatureExtractor(nn.Module):
         return x
 	
 
-class CustomCNNFeatureExtractor(nn.Module):
-    def __init__(self):
-        super(CustomCNNFeatureExtractor, self).__init__()
-        self.conv1 = nn.Conv2d(3, 16, kernel_size=3, stride=1, padding=1)
-        self.bn1 = nn.BatchNorm2d(16)
-        self.relu = nn.ReLU(inplace=True)
+class CMTStem(nn.Module):
+    """
+    Use CMTStem module to process input image and overcome the limitation of the
+    non-overlapping patches.
 
-        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, stride=1, padding=1)
-        self.bn2 = nn.BatchNorm2d(32)
+    First past through the image with a 2x2 convolution to reduce the image size.
+    Then past throught two 1x1 convolution for better local information.
 
-        self.conv3 = nn.Conv2d(32, 16, kernel_size=3, stride=2, padding=1) # Downsample here
-        self.bn3 = nn.BatchNorm2d(16)
+    Input:
+        - x: (B, 3, H, W)
+    Output:
+        - result: (B, 32, H / 2, W / 2)
+    """
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size = 3, stride = 2, padding = 1, bias = False)
+        self.gelu1 = nn.GELU()
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size = 3, stride = 1, padding = 1, bias = False)
+        self.gelu2 = nn.GELU()
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.conv3 = nn.Conv2d(out_channels, out_channels, kernel_size = 3, stride = 1, padding = 1, bias = False)
+        self.gelu3 = nn.GELU()
+        self.bn3 = nn.BatchNorm2d(out_channels)
+        self.init_weight()
 
-        self.conv4 = nn.Conv2d(16, 8, kernel_size=3, stride=1, padding=1)
-        self.bn4 = nn.BatchNorm2d(8)
+    def init_weight(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight)
+                if m.bias is not None:
+                    m.bias.data.zero_()
+            elif isinstance(m, nn.BatchNorm2d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
 
     def forward(self, x):
-        x = self.relu(self.bn1(self.conv1(x)))
-        x = self.relu(self.bn2(self.conv2(x)))
-        x = self.relu(self.bn3(self.conv3(x))) # Downsample
-        x = self.relu(self.bn4(self.conv4(x)))
-        return x
+        x = self.conv1(x)
+        x = self.gelu1(x)
+        x = self.bn1(x)
+        x = self.conv2(x)
+        x = self.gelu2(x)
+        x = self.bn2(x)
+        x = self.conv3(x)
+        x = self.gelu3(x)
+        result = self.bn3(x)
+        return result
+	
+class CMTDecoder(nn.Module):
+    """
+    Reverse of CMTStem module to decode feature maps back to the original image size.
+    It upscales the feature maps and reduces the number of channels.
+
+    Input:
+        - x: (B, 128, H, W)
+    Output:
+        - result: (B, 3, 2*H, 2*W)
+    """
+    def __init__(self, in_channels, out_channels):
+        super().__init__()
+        self.conv1 = nn.Conv2d(in_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False)
+        self.gelu1 = nn.GELU()
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.conv2 = nn.Conv2d(out_channels, out_channels, kernel_size=3, stride=1, padding=1, bias=False)
+        self.gelu2 = nn.GELU()
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.conv3 = nn.Conv2d(out_channels, 3, kernel_size=3, stride=1, padding=1, bias=False)
+        self.gelu3 = nn.GELU()
+        self.bn3 = nn.BatchNorm2d(3)
+        self.upsample = nn.Upsample(scale_factor=2, mode='nearest')
+        self.init_weight()
+
+    def init_weight(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                nn.init.kaiming_normal_(m.weight)
+                if m.bias is not None:
+                    m.bias.data.zero_()
+            elif isinstance(m, nn.BatchNorm2d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.gelu1(x)
+        x = self.bn1(x)
+        x = self.conv2(x)
+        x = self.gelu2(x)
+        x = self.bn2(x)
+        x = self.conv3(x)
+        x = self.gelu3(x)
+        x = self.bn3(x)
+        result = self.upsample(x)
+        return result
 
 
 class RLN(nn.Module):
@@ -439,8 +511,10 @@ class DehazeFormer(nn.Module):
 		super(DehazeFormer, self).__init__()
 
 		# Initialize the CNN feature extractor
-		self.cnn_extractor = CustomCNNFeatureExtractor() #CustomizedCNNFeatureExtractor() #CNNFeatureExtractor(pretrained=True)
-		self.channel_adjustment_layer = nn.Conv2d(in_channels=8, out_channels=3, kernel_size=1)
+		self.cnn_extractor = CMTStem(3,129) #CustomizedCNNFeatureExtractor() #CNNFeatureExtractor(pretrained=True)
+		self.channel_adjustment_layer = nn.Conv2d(in_channels=129, out_channels=128, kernel_size=1)
+
+		self.cnnDecoder = CMTDecoder(128,64)
 
 		# setting
 		self.patch_size = 4
@@ -449,7 +523,7 @@ class DehazeFormer(nn.Module):
 
 		# split image into non-overlapping patches
 		self.patch_embed = PatchEmbed(
-			patch_size=1, in_chans=8, embed_dim=embed_dims[0], kernel_size=3)
+			patch_size=1, in_chans=129, embed_dim=embed_dims[0], kernel_size=3)
 
 		# backbone
 		self.layer1 = BasicLayer(network_depth=sum(depths), dim=embed_dims[0], depth=depths[0],
@@ -501,7 +575,7 @@ class DehazeFormer(nn.Module):
 
 		# merge non-overlapping patches into image
 		self.patch_unembed = PatchUnEmbed(
-			patch_size=1, out_chans=out_chans, embed_dim=embed_dims[4], kernel_size=3)
+			patch_size=1, out_chans=129, embed_dim=embed_dims[4], kernel_size=3)
 
 
 	def check_image_size(self, x):
@@ -513,59 +587,71 @@ class DehazeFormer(nn.Module):
 		return x
 
 	def forward_features(self, x):
-		# print("going in patch embed")
+		print("-"*100)
+		print(f"going in patch embed: {x.shape}")
 		x = self.patch_embed(x)
-		# print(f"out of patch embed: {x.shape}")
+		print(f"out of patch embed: {x.shape}")
 		x = self.layer1(x)
-		# print("out of layer1")
+		print(f"out of layer1: {x.shape}")
 		skip1 = x
 
 		x = self.patch_merge1(x)
-		# print(f"out of patch merge 1: {x.shape}")
+		print(f"out of patch merge 1: {x.shape}")
 		x = self.layer2(x)
-		# print(f"out of layer 2: {x.shape}")
+		print(f"out of layer 2: {x.shape}")
 		skip2 = x
 
 		x = self.patch_merge2(x)
-		# print("out of patch merge 2")
+		print(f"out of patch merge 2: {x.shape}")
 		x = self.layer3(x)
+		print(f"out of layer 3: {x.shape}")
 		x = self.patch_split1(x)
+		print(f"out of patch split 1: {x.shape}")
 
 		x = self.fusion1([x, self.skip2(skip2)]) + x
+		print(f"out of fusion 1: {x.shape}")
 		x = self.layer4(x)
+		print(f"out of layer 4: {x.shape}")
 		x = self.patch_split2(x)
+		print(f"out of patch split 1: {x.shape}")
 
 		x = self.fusion2([x, self.skip1(skip1)]) + x
+		print(f"out of fusion 1: {x.shape}")
 		x = self.layer5(x)
-		# print(f"Shape after layer 5: {x.shape}")
+		print(f"Shape after layer 5: {x.shape}")
 		x = self.patch_unembed(x)
-		# print(f"Final shape after patch unembed: {x.shape}")
+		print(f"Final shape after patch unembed: {x.shape}")
+		print("-"*100)
 		return x
 
 	def forward(self, x):
 		H, W = x.shape[2:]
-		# print(f"Height: {H}, Width: {W}")
+		print(f"Height: {H}, Width: {W}")
 		x = self.check_image_size(x)
-		# print(f"Check img size: {x.shape}")
+		print(f"Check img size: {x.shape}")
 
 		x = self.cnn_extractor(x)
-		# print(f"Shape after CNN: {x.shape}")
+		print(f"Shape after CNN: {x.shape}")
 
 		feat = self.forward_features(x)
-		# print(f"Shape after forward features: {feat.shape}")
-		K, B = torch.split(feat, (1, 3), dim=1)
-		# print(f"K: {K.shape}, B: {B.shape}, x: {x.shape}")
+		print(f"Shape after forward features: {feat.shape}")
+		K, B = torch.split(feat, (1, 128), dim=1)
   
-		x_adjusted = x.to(dtype=torch.float32)  # Ensure x is float32
-		x_adjusted = self.channel_adjustment_layer(x_adjusted)
+		# x_adjusted = x.to(dtype=torch.float32)  # Ensure x is float32
+		# x_adjusted = self.channel_adjustment_layer(x_adjusted)
 
 		# Now you can perform the operation without dimension mismatch
 		# print(f"K: {K.shape}, B: {B.shape}, x: {x_adjusted.shape}")
-		x = K * x_adjusted - B + x_adjusted
+		# x = K * x_adjusted - B + x_adjusted
 
-		# x = K * x - B + x
+		x = self.channel_adjustment_layer(x)
+		print(f"K: {K.shape}, B: {B.shape}, x: {x.shape}")
+		x = K * x - B + x
 		x = x[:, :, :H, :W]
-		x = F.interpolate(x, size=(64, 64), mode='bilinear', align_corners=False)
+		print(f"x adjusted shape: {x.shape}")
+		x = self.cnnDecoder(x)
+		print(f"x decoder shape: {x.shape}")
+		# x = F.interpolate(x, size=(64, 64), mode='bilinear', align_corners=False)
 		# print(f"Final shape: {x.shape}")
 		return x
 
