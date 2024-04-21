@@ -8,6 +8,7 @@ from torch.cuda.amp import autocast, GradScaler
 from torch.utils.data import DataLoader
 from tensorboardX import SummaryWriter
 from tqdm import tqdm
+# import torch.nn.utils as torch_utils
 
 from utils import AverageMeter
 from datasets.loader import PairLoader
@@ -51,6 +52,7 @@ def train(train_loader, network, criterion, optimizer, scaler):
 
 		optimizer.zero_grad()
 		scaler.scale(loss).backward()
+		# torch_utils.clip_grad_norm_(network.parameters(), max_norm=1.0)  # Gradient clipping
 		scaler.step(optimizer)
 		scaler.update()
 
