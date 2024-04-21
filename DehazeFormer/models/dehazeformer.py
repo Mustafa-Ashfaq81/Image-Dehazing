@@ -511,10 +511,10 @@ class DehazeFormer(nn.Module):
 		super(DehazeFormer, self).__init__()
 
 		# Initialize the CNN feature extractor
-		self.cnn_extractor = CMTStem(3,513) #CustomizedCNNFeatureExtractor() #CNNFeatureExtractor(pretrained=True)
-		self.channel_adjustment_layer = nn.Conv2d(in_channels=513, out_channels=512, kernel_size=1)
+		self.cnn_extractor = CMTStem(3,257) #CustomizedCNNFeatureExtractor() #CNNFeatureExtractor(pretrained=True)
+		self.channel_adjustment_layer = nn.Conv2d(in_channels=257, out_channels=256, kernel_size=1)
 
-		self.cnnDecoder = CMTDecoder(512,64)
+		self.cnnDecoder = CMTDecoder(256,64)
 
 		# setting
 		self.patch_size = 4
@@ -523,7 +523,7 @@ class DehazeFormer(nn.Module):
 
 		# split image into non-overlapping patches
 		self.patch_embed = PatchEmbed(
-			patch_size=1, in_chans=513, embed_dim=embed_dims[0], kernel_size=3)
+			patch_size=1, in_chans=257, embed_dim=embed_dims[0], kernel_size=3)
 
 		# backbone
 		self.layer1 = BasicLayer(network_depth=sum(depths), dim=embed_dims[0], depth=depths[0],
@@ -575,7 +575,7 @@ class DehazeFormer(nn.Module):
 
 		# merge non-overlapping patches into image
 		self.patch_unembed = PatchUnEmbed(
-			patch_size=1, out_chans=513, embed_dim=embed_dims[4], kernel_size=3)
+			patch_size=1, out_chans=257, embed_dim=embed_dims[4], kernel_size=3)
 
 
 	def check_image_size(self, x):
@@ -635,14 +635,7 @@ class DehazeFormer(nn.Module):
 
 		feat = self.forward_features(x)
 		# print(f"Shape after forward features: {feat.shape}")
-		K, B = torch.split(feat, (1, 512), dim=1)
-  
-		# x_adjusted = x.to(dtype=torch.float32)  # Ensure x is float32
-		# x_adjusted = self.channel_adjustment_layer(x_adjusted)
-
-		# Now you can perform the operation without dimension mismatch
-		# print(f"K: {K.shape}, B: {B.shape}, x: {x_adjusted.shape}")
-		# x = K * x_adjusted - B + x_adjusted
+		K, B = torch.split(feat, (1, 256), dim=1)
 
 		x = self.channel_adjustment_layer(x)
 		# print(f"K: {K.shape}, B: {B.shape}, x: {x.shape}")
@@ -651,14 +644,13 @@ class DehazeFormer(nn.Module):
 		# print(f"x adjusted shape: {x.shape}")
 		x = self.cnnDecoder(x)
 		# print(f"x decoder shape: {x.shape}")
-		# x = F.interpolate(x, size=(64, 64), mode='bilinear', align_corners=False)
-		# print(f"Final shape: {x.shape}")
 		return x
 
 
 def dehazeformer_t():
     return DehazeFormer(
-		embed_dims=[24, 48, 96, 48, 24],
+		embed_dims=[48, 96, 192, 96, 48],
+		# embed_dims=[24, 48, 96, 48, 24],
 		mlp_ratios=[2., 4., 4., 2., 2.],
 		depths=[4, 4, 4, 2, 2],
 		num_heads=[2, 4, 6, 1, 1],
@@ -725,9 +717,9 @@ def dehazeformer_l():
 		attn_ratio=[1/4, 1/2, 3/4, 0, 0],
 		conv_type=['Conv', 'Conv', 'Conv', 'Conv', 'Conv'])
 
-if __name__ == '__main__':
-	model = dehazeformer_t()
-	shape = (8, 3, 64, 64)
-	img = torch.randn(*shape)
-	output = model(img)
-	print(output.shape)
+# if __name__ == '__main__':
+# 	model = dehazeformer_t()
+# 	shape = (8, 3, 64, 64)
+# 	img = torch.randn(*shape)
+# 	output = model(img)
+# 	# print(output.shape)
