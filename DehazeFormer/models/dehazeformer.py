@@ -587,54 +587,54 @@ class DehazeFormer(nn.Module):
 		return x
 
 	def forward_features(self, x):
-		print("-"*100)
-		print(f"going in patch embed: {x.shape}")
+		# print("-"*100)
+		# print(f"going in patch embed: {x.shape}")
 		x = self.patch_embed(x)
-		print(f"out of patch embed: {x.shape}")
+		# print(f"out of patch embed: {x.shape}")
 		x = self.layer1(x)
-		print(f"out of layer1: {x.shape}")
+		# print(f"out of layer1: {x.shape}")
 		skip1 = x
 
 		x = self.patch_merge1(x)
-		print(f"out of patch merge 1: {x.shape}")
+		# print(f"out of patch merge 1: {x.shape}")
 		x = self.layer2(x)
-		print(f"out of layer 2: {x.shape}")
+		# print(f"out of layer 2: {x.shape}")
 		skip2 = x
 
 		x = self.patch_merge2(x)
-		print(f"out of patch merge 2: {x.shape}")
+		# print(f"out of patch merge 2: {x.shape}")
 		x = self.layer3(x)
-		print(f"out of layer 3: {x.shape}")
+		# print(f"out of layer 3: {x.shape}")
 		x = self.patch_split1(x)
-		print(f"out of patch split 1: {x.shape}")
+		# print(f"out of patch split 1: {x.shape}")
 
 		x = self.fusion1([x, self.skip2(skip2)]) + x
-		print(f"out of fusion 1: {x.shape}")
+		# print(f"out of fusion 1: {x.shape}")
 		x = self.layer4(x)
-		print(f"out of layer 4: {x.shape}")
+		# print(f"out of layer 4: {x.shape}")
 		x = self.patch_split2(x)
-		print(f"out of patch split 1: {x.shape}")
+		# print(f"out of patch split 1: {x.shape}")
 
 		x = self.fusion2([x, self.skip1(skip1)]) + x
-		print(f"out of fusion 1: {x.shape}")
+		# print(f"out of fusion 1: {x.shape}")
 		x = self.layer5(x)
-		print(f"Shape after layer 5: {x.shape}")
+		# print(f"Shape after layer 5: {x.shape}")
 		x = self.patch_unembed(x)
-		print(f"Final shape after patch unembed: {x.shape}")
-		print("-"*100)
+		# print(f"Final shape after patch unembed: {x.shape}")
+		# print("-"*100)
 		return x
 
 	def forward(self, x):
 		H, W = x.shape[2:]
-		print(f"Height: {H}, Width: {W}")
+		# print(f"Height: {H}, Width: {W}")
 		x = self.check_image_size(x)
-		print(f"Check img size: {x.shape}")
+		# print(f"Check img size: {x.shape}")
 
 		x = self.cnn_extractor(x)
-		print(f"Shape after CNN: {x.shape}")
+		# print(f"Shape after CNN: {x.shape}")
 
 		feat = self.forward_features(x)
-		print(f"Shape after forward features: {feat.shape}")
+		# print(f"Shape after forward features: {feat.shape}")
 		K, B = torch.split(feat, (1, 128), dim=1)
   
 		# x_adjusted = x.to(dtype=torch.float32)  # Ensure x is float32
@@ -645,12 +645,12 @@ class DehazeFormer(nn.Module):
 		# x = K * x_adjusted - B + x_adjusted
 
 		x = self.channel_adjustment_layer(x)
-		print(f"K: {K.shape}, B: {B.shape}, x: {x.shape}")
+		# print(f"K: {K.shape}, B: {B.shape}, x: {x.shape}")
 		x = K * x - B + x
 		x = x[:, :, :H, :W]
-		print(f"x adjusted shape: {x.shape}")
+		# print(f"x adjusted shape: {x.shape}")
 		x = self.cnnDecoder(x)
-		print(f"x decoder shape: {x.shape}")
+		# print(f"x decoder shape: {x.shape}")
 		# x = F.interpolate(x, size=(64, 64), mode='bilinear', align_corners=False)
 		# print(f"Final shape: {x.shape}")
 		return x
@@ -725,9 +725,9 @@ def dehazeformer_l():
 		attn_ratio=[1/4, 1/2, 3/4, 0, 0],
 		conv_type=['Conv', 'Conv', 'Conv', 'Conv', 'Conv'])
 
-if __name__ == '__main__':
-	model = dehazeformer_t()
-	shape = (8, 3, 64, 64)
-	img = torch.randn(*shape)
-	output = model(img)
-	print(output.shape)
+# if __name__ == '__main__':
+# 	model = dehazeformer_t()
+# 	shape = (8, 3, 64, 64)
+# 	img = torch.randn(*shape)
+# 	output = model(img)
+# 	# print(output.shape)
