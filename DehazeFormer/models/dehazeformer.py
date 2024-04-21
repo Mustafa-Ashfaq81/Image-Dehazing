@@ -511,10 +511,10 @@ class DehazeFormer(nn.Module):
 		super(DehazeFormer, self).__init__()
 
 		# Initialize the CNN feature extractor
-		self.cnn_extractor = CMTStem(3,129) #CustomizedCNNFeatureExtractor() #CNNFeatureExtractor(pretrained=True)
-		self.channel_adjustment_layer = nn.Conv2d(in_channels=129, out_channels=128, kernel_size=1)
+		self.cnn_extractor = CMTStem(3,513) #CustomizedCNNFeatureExtractor() #CNNFeatureExtractor(pretrained=True)
+		self.channel_adjustment_layer = nn.Conv2d(in_channels=513, out_channels=512, kernel_size=1)
 
-		self.cnnDecoder = CMTDecoder(128,64)
+		self.cnnDecoder = CMTDecoder(512,64)
 
 		# setting
 		self.patch_size = 4
@@ -523,7 +523,7 @@ class DehazeFormer(nn.Module):
 
 		# split image into non-overlapping patches
 		self.patch_embed = PatchEmbed(
-			patch_size=1, in_chans=129, embed_dim=embed_dims[0], kernel_size=3)
+			patch_size=1, in_chans=513, embed_dim=embed_dims[0], kernel_size=3)
 
 		# backbone
 		self.layer1 = BasicLayer(network_depth=sum(depths), dim=embed_dims[0], depth=depths[0],
@@ -575,7 +575,7 @@ class DehazeFormer(nn.Module):
 
 		# merge non-overlapping patches into image
 		self.patch_unembed = PatchUnEmbed(
-			patch_size=1, out_chans=129, embed_dim=embed_dims[4], kernel_size=3)
+			patch_size=1, out_chans=513, embed_dim=embed_dims[4], kernel_size=3)
 
 
 	def check_image_size(self, x):
@@ -635,7 +635,7 @@ class DehazeFormer(nn.Module):
 
 		feat = self.forward_features(x)
 		# print(f"Shape after forward features: {feat.shape}")
-		K, B = torch.split(feat, (1, 128), dim=1)
+		K, B = torch.split(feat, (1, 512), dim=1)
   
 		# x_adjusted = x.to(dtype=torch.float32)  # Ensure x is float32
 		# x_adjusted = self.channel_adjustment_layer(x_adjusted)
@@ -725,9 +725,9 @@ def dehazeformer_l():
 		attn_ratio=[1/4, 1/2, 3/4, 0, 0],
 		conv_type=['Conv', 'Conv', 'Conv', 'Conv', 'Conv'])
 
-# if __name__ == '__main__':
-# 	model = dehazeformer_t()
-# 	shape = (8, 3, 64, 64)
-# 	img = torch.randn(*shape)
-# 	output = model(img)
-# 	# print(output.shape)
+if __name__ == '__main__':
+	model = dehazeformer_t()
+	shape = (8, 3, 64, 64)
+	img = torch.randn(*shape)
+	output = model(img)
+	print(output.shape)
