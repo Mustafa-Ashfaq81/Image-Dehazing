@@ -148,7 +148,7 @@ class Mlp(nn.Module):
 
 		self.mlp = nn.Sequential(
 			nn.Conv2d(in_features, hidden_features, 1),
-			nn.ReLU(True),
+			nn.PReLU(True),
 			nn.Conv2d(hidden_features, out_features, 1)
 		)
 
@@ -209,7 +209,7 @@ class WindowAttention(nn.Module):
 		self.register_buffer("relative_positions", relative_positions)
 		self.meta = nn.Sequential(
 			nn.Linear(2, 256, bias=True),
-			nn.ReLU(True),
+			nn.PReLU(True),
 			nn.Linear(256, num_heads, bias=True)
 		)
 
@@ -252,7 +252,7 @@ class Attention(nn.Module):
 		if self.conv_type == 'Conv':
 			self.conv = nn.Sequential(
 				nn.Conv2d(dim, dim, kernel_size=3, padding=1, padding_mode='reflect'),
-				nn.ReLU(True),
+				nn.PReLU(True),
 				nn.Conv2d(dim, dim, kernel_size=3, padding=1, padding_mode='reflect')
 			)
 
@@ -453,7 +453,7 @@ class SKFusion(nn.Module):
 		self.avg_pool = nn.AdaptiveAvgPool2d(1)
 		self.mlp = nn.Sequential(
 			nn.Conv2d(dim, d, 1, bias=False), 
-			nn.ReLU(),
+			nn.PReLU(),
 			nn.Conv2d(d, dim*height, 1, bias=False)
 		)
 		
