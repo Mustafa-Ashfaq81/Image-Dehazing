@@ -8,7 +8,7 @@ from timm.models.layers import to_2tuple, trunc_normal_
 from torchvision.models import resnet18, ResNet18_Weights
 import cv2
 
-
+FEATURES_LEARNED = 256
 class DEHAZECnnEncoder(nn.Module):
     """
     Use DEHAZECnnEncoder module to process input image and overcome the limitation of the
@@ -525,11 +525,11 @@ class DehazeFormer(nn.Module):
 
         # Initialize the CNN feature extractor
         # CustomizedCNNFeatureExtractor() #CNNFeatureExtractor(pretrained=True)
-        self.cnn_extractor = DEHAZECnnEncoder(3, 257)
+        self.cnn_extractor = DEHAZECnnEncoder(3, FEATURES_LEARNED+1)
         self.channel_adjustment_layer = nn.Conv2d(
-            in_channels=257, out_channels=256, kernel_size=1)
+            in_channels=FEATURES_LEARNED+1, out_channels=FEATURES_LEARNED, kernel_size=1)
 
-        self.cnnDecoder = DEHAZECnnDecoder(256, 64)
+        self.cnnDecoder = DEHAZECnnDecoder(FEATURES_LEARNED, 64)
 
         # setting
         self.patch_size = 4
@@ -538,7 +538,7 @@ class DehazeFormer(nn.Module):
 
         # split image into non-overlapping patches
         self.patch_embed = PatchEmbed(
-            patch_size=1, in_chans=257, embed_dim=embed_dims[0], kernel_size=3)
+            patch_size=1, in_chans=FEATURES_LEARNED+1, embed_dim=embed_dims[0], kernel_size=3)
 
         # backbone
         self.layer1 = BasicLayer(network_depth=sum(depths), dim=embed_dims[0], depth=depths[0],
@@ -590,7 +590,7 @@ class DehazeFormer(nn.Module):
 
         # merge non-overlapping patches into image
         self.patch_unembed = PatchUnEmbed(
-            patch_size=1, out_chans=257, embed_dim=embed_dims[4], kernel_size=3)
+            patch_size=1, out_chans=FEATURES_LEARNED+1, embed_dim=embed_dims[4], kernel_size=3)
 
     def check_image_size(self, x):
         # NOTE: for I2I test
@@ -643,23 +643,22 @@ class DehazeFormer(nn.Module):
         # print(f"Height: {H}, Width: {W}")
         x = self.check_image_size(x)
         # print(f"Check img size: {x.shape}")
-        # bias_dtype = self.cnn_extractor.conv1.bias.dtype
-        # x = x.to(dtype=bias_dtype)
+        
         x = self.cnn_extractor(x)
         # print(f"Shape after CNN: {x.shape}")
         x = x.to(torch.float)
 
         feat = self.forward_features(x)
         # print(f"Shape after forward features: {feat.shape}")
-        K, B = torch.split(feat, (1, 256), dim=1)
 
         x = self.channel_adjustment_layer(x)
+
+        K, B = torch.split(feat, (1, FEATURES_LEARNED), dim=1)
         # print(f"K: {K.shape}, B: {B.shape}, x: {x.shape}")
         x = K * x - B + x
         x = x[:, :, :H, :W]
         # print(f"x adjusted shape: {x.shape}")
-        # bias_dtype = self.cnnDecoder.conv1.bias.dtype
-        # x = x.to(dtype=bias_dtype)
+        
         x = self.cnnDecoder(x)
 
         # print(f"x decoder shape: {x.shape}")
@@ -669,7 +668,6 @@ class DehazeFormer(nn.Module):
 
 def dehazeformer_t():
     return DehazeFormer(
-        # embed_dims=[48, 96, 192, 96, 48],
         embed_dims=[24, 48, 96, 48, 24],
         mlp_ratios=[2., 4., 4., 2., 2.],
         depths=[4, 4, 4, 2, 2],
@@ -738,9 +736,11 @@ def dehazeformer_l():
         conv_type=['Conv', 'Conv', 'Conv', 'Conv', 'Conv'])
 
 
-# if __name__ == '__main__':
-#     model = dehazeformer_t()
-#     shape = (8, 3, 64, 64)
-#     img = torch.randn(*shape)
-#     output = model(img)
-#     print(output.shape)
+if __name__ == '__main__':
+    model = dehazeformer_t()
+    shape = (8, 3, 64, 64)
+    img = torch.randn(*shape)
+    output = model(img)
+    print("Output Shape: ", output.shape)
+    # print(f"Number of parameters: {sum(p.numel() for p in model.parameters()) / 1e6 :.3f}M")
+    print(f"Number of learnable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad) / 1e6:.3f}M")
