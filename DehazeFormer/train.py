@@ -103,26 +103,24 @@ class TVRegularizationLoss(nn.Module):
         return tv_loss / (batch_size * channels * height * width)  # Normalize by image size
 
 def combined_loss(x, y):
+    # Calculate Mean Squared Error (MSE) loss
     mse_loss = F.mse_loss(x, y)
     
     # Apply TV regularization to the reconstructed image
     tv_loss = TVRegularizationLoss()(x)
     
-    # Convert torch tensors to NumPy arrays
-    x_np = x.detach().cpu().numpy()
-    y_np = y.detach().cpu().numpy()
-    
-    # Calculate SSIM loss for perceptual similarity
-    height, width = x_np.shape[-2:]
-    win_size = min(height, width)
-    print("he", win_size)
-    ssim_loss = 1 - ssim(x_np, y_np, data_range=1, multichannel=True, win_size=win_size)
-    
-    # Weight for TV regularization term (you can adjust this)
+    # Calculate Structural Similarity (SSIM) loss
+    ssim_loss = 1 - ssim(x.detach().squeeze().cpu().numpy(), y.detach().squeeze().cpu().numpy(),
+    data_range=1, win_size=3)
+
+    # Weight for TV regularization term
     tv_weight = 0.001
     
+    # Weight for SSIM loss
+    ssim_weight = 0.1
+    
     # Combine losses with appropriate weights
-    total_loss = mse_loss + tv_weight * tv_loss + ssim_loss
+    total_loss = mse_loss + tv_weight * tv_loss + ssim_weight * ssim_loss
     return total_loss
 
 if __name__ == '__main__':
@@ -135,7 +133,7 @@ if __name__ == '__main__':
     network = eval(args.model.replace('-', '_'))()
     network = nn.DataParallel(network).cuda()
 
-    criterion = mse_loss #combined_loss  #nn.L1Loss()
+    criterion = combined_loss # mse_loss #nn.L1Loss()
 
     if setting['optimizer'] == 'adam':
         optimizer = torch.optim.Adam(network.parameters(), lr=setting['lr'])

@@ -1,9 +1,9 @@
 {
     "batch_size": 8,
     "patch_size": 64,
-    "valid_mode": "test",
+    "valid_mode": "valid",
     "edge_decay": 0,
-    "only_h_flip": false,
+    "only_h_flip": true,
     "optimizer": "adamw",
     "lr": 1e-4,
     "epochs":199,
