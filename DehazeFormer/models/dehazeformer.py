@@ -736,11 +736,11 @@ def dehazeformer_l():
         conv_type=['Conv', 'Conv', 'Conv', 'Conv', 'Conv'])
 
 
-if __name__ == '__main__':
-    model = dehazeformer_t()
-    shape = (8, 3, 64, 64)
-    img = torch.randn(*shape)
-    output = model(img)
-    print("Output Shape: ", output.shape)
-    # print(f"Number of parameters: {sum(p.numel() for p in model.parameters()) / 1e6 :.3f}M")
-    print(f"Number of learnable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad) / 1e6:.3f}M")
+# if __name__ == '__main__':
+#     model = dehazeformer_t()
+#     shape = (8, 3, 64, 64)
+#     img = torch.randn(*shape)
+#     output = model(img)
+#     print("Output Shape: ", output.shape)
+#     # print(f"Number of parameters: {sum(p.numel() for p in model.parameters()) / 1e6 :.3f}M")
+#     print(f"Number of learnable parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad) / 1e6:.3f}M")
